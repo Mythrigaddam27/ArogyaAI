@@ -12,4 +12,8 @@ frontend/.env
 # python
 venv/
 __pycache__/
+<<<<<<< HEAD
 *.pyc
+=======
+*.pyc
+>>>>>>> 03762970 (Remove node_modules and update gitignore)
