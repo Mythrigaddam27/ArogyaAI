@@ -1,5 +1,15 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+
+# environment variables
+.env
 backend/.env
 frontend/.env
-node_modules/
+
+# python
 venv/
-dist/
+__pycache__/
+*.pyc
