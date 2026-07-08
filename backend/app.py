@@ -1,19 +1,365 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from io import BytesIO
+from datetime import datetime
+import json
+import os
+import traceback
 
-app = FastAPI()
+from dotenv import load_dotenv
+from flask import Flask, jsonify, request, send_file
+from flask_cors import CORS
+from google import genai
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
 
-@app.get("/")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"), override=True)
+
+api_key = os.getenv("GEMINI_API_KEY")
+
+if not api_key:
+    raise ValueError("GEMINI_API_KEY not found!")
+
+client = genai.Client(api_key=api_key)
+
+app = Flask(__name__)
+CORS(app)
+
+
+@app.route("/")
 def home():
+    return "ArogyaAI Backend Running 🚀"
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
+
+@app.route("/summary", methods=["POST"])
+def summary():
+    try:
+        data = request.get_json(silent=True) or {}
+
+        prompt = f"""
+You are an AI Public Health Expert.
+
+Analyze this healthcare data and provide a short summary.
+
+Patients:
+{data.get('patients')}
+
+Medicines:
+{data.get('medicines')}
+
+Health Centers:
+{data.get('centers')}
+
+AI Alerts:
+{data.get('alerts')}
+
+Mention:
+1. Overall health condition
+2. Major risks
+3. Medicine recommendations
+4. Suggested actions
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+
+        answer_text = getattr(response, "text", None) or "Unable to generate AI summary."
+
+        return jsonify({"summary": answer_text})
+
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({
+            "summary": "Unable to generate AI summary.",
+            "error": str(exc)
+        }), 500
+
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    try:
+        data = request.get_json(silent=True) or {}
+        question = (data.get("question") or "").strip()
+
+        if not question:
+            return jsonify({"answer": "Please enter a question."}), 400
+
+        prompt = f"""
+You are ArogyaAI, an AI Public Health Assistant.
+
+Answer professionally.
+
+Question:
+{question}
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+
+        answer_text = getattr(response, "text", None) or "No response."
+
+        return jsonify({"answer": answer_text})
+
+    except Exception as exc:
+        traceback.print_exc()
+
+        return jsonify({
+            "answer": "Unable to generate response.",
+            "error": str(exc)
+        }), 500
+
+
+def build_fallback_prediction(data):
+
+    symptoms = [
+        (data.get("fever") or "No").lower(),
+        (data.get("cough") or "No").lower(),
+        (data.get("headache") or "No").lower(),
+        (data.get("fatigue") or "No").lower(),
+    ]
+
+    yes = sum(1 for s in symptoms if s == "yes")
+
+    if yes >= 3:
+
+        disease = "Possible Viral Fever"
+
+        risk = "Medium"
+
+        reasoning = "Multiple symptoms indicate a viral infection."
+
+        recommendations = [
+            "Stay hydrated",
+            "Take adequate rest",
+            "Visit nearest PHC if symptoms worsen"
+        ]
+
+    elif yes == 2:
+
+        disease = "Possible Mild Viral Infection"
+
+        risk = "Low"
+
+        reasoning = "Symptoms appear mild."
+
+        recommendations = [
+            "Monitor symptoms",
+            "Drink fluids",
+            "Take rest"
+        ]
+
+    else:
+
+        disease = "General Fatigue"
+
+        risk = "Low"
+
+        reasoning = "Few symptoms reported."
+
+        recommendations = [
+            "Maintain hydration",
+            "Monitor health"
+        ]
+
     return {
-        "status": "success",
-        "message": "Welcome to ArogyaAI Backend 🚑"
+        "prediction": disease,
+        "possible_disease": disease,
+        "risk_level": risk,
+        "reasoning": reasoning,
+        "immediate_recommendations": recommendations,
+        "referral_advised": False,
+        "source": "fallback"
     }
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+
+    try:
+
+        data = request.get_json(silent=True) or {}
+
+        prompt = f"""
+You are an experienced doctor.
+
+Patient Details
+
+Age: {data.get("age")}
+
+Gender: {data.get("gender")}
+
+District: {data.get("district")}
+
+Symptoms
+
+Fever: {data.get("fever")}
+
+Cough: {data.get("cough")}
+
+Headache: {data.get("headache")}
+
+Fatigue: {data.get("fatigue")}
+
+Provide:
+
+Possible disease
+
+Risk Level
+
+Reasoning
+
+Recommendations
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+
+        text = getattr(response, "text", None) or "Unable to predict."
+
+        return jsonify({
+            "prediction": text,
+            "possible_disease": text,
+            "risk_level": "Medium",
+            "reasoning": "Generated by Gemini",
+            "immediate_recommendations": [
+                "Consult a doctor",
+                "Stay hydrated"
+            ],
+            "referral_advised": False,
+            "source": "gemini"
+        })
+
+    except Exception as exc:
+
+        traceback.print_exc()
+
+        payload = build_fallback_prediction(data)
+
+        payload["error"] = str(exc)
+
+        return jsonify(payload)
+
+
+# ==========================
+# PDF REPORT ROUTE
+# ==========================
+
+@app.route("/report", methods=["GET"])
+def report():
+
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(buffer)
+
+    styles = getSampleStyleSheet()
+
+    story = []
+
+    story.append(Paragraph("<b>ArogyaAI</b>", styles["Title"]))
+
+    story.append(
+        Paragraph(
+            "Public Health Intelligence Report",
+            styles["Heading2"]
+        )
+    )
+
+    story.append(
+        Paragraph(
+            f"Generated: {datetime.now().strftime('%d-%m-%Y %H:%M')}",
+            styles["Normal"]
+        )
+    )
+
+    story.append(Paragraph("<br/>", styles["Normal"]))
+
+    story.append(
+        Paragraph("AI Health Summary", styles["Heading2"])
+    )
+
+    story.append(
+        Paragraph(
+            "Overall health conditions remain stable. Dengue cases are increasing in Hyderabad. Medicine stock is sufficient across most health centers.",
+            styles["BodyText"]
+        )
+    )
+
+    story.append(Paragraph("<br/>", styles["Normal"]))
+
+    story.append(
+        Paragraph("Disease Alerts", styles["Heading2"])
+    )
+
+    alerts = [
+        "Dengue Spike - Hyderabad (High)",
+        "Malaria Risk - Warangal (Medium)",
+        "Medicine Shortage - Karimnagar (High)",
+        "Water Contamination - Adilabad (High)",
+        "Seasonal Flu - Khammam (Low)"
+    ]
+
+    for alert in alerts:
+        story.append(
+            Paragraph(f"• {alert}", styles["BodyText"])
+        )
+
+    story.append(Paragraph("<br/>", styles["Normal"]))
+
+    story.append(
+        Paragraph("Recommendations", styles["Heading2"])
+    )
+
+    recommendations = [
+        "Increase mosquito surveillance.",
+        "Restock ORS and Paracetamol.",
+        "Conduct awareness campaigns.",
+        "Monitor fever cases daily.",
+        "Improve rural healthcare access."
+    ]
+
+    for item in recommendations:
+        story.append(
+            Paragraph(f"• {item}", styles["BodyText"])
+        )
+
+    story.append(Paragraph("<br/>", styles["Normal"]))
+
+    story.append(
+        Paragraph(
+            "<b>Generated by ArogyaAI</b><br/>AI Powered Public Health Monitoring Platform",
+            styles["Italic"]
+        )
+    )
+
+    doc.build(story)
+
+    buffer.seek(0)
+
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name="ArogyaAI_Health_Report.pdf",
+        mimetype="application/pdf"
+    )
+print("\n===== REGISTERED ROUTES =====")
+print(app.url_map)
+print("=============================\n")
+
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True,
+        use_reloader=False,
+    )
