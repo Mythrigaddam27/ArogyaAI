@@ -58,7 +58,7 @@ export default function Dashboard() {
 
   // Download Report
   const downloadReport = () => {
-    window.open("http://127.0.0.1:5000/report", "_blank");
+    window.open("https://arogyaai-10at.onrender.com/report", "_blank");
   };
 
   return (

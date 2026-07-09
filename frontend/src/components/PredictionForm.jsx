@@ -45,7 +45,7 @@ export default function PredictionForm() {
     console.log("Submitting prediction request", payload);
 
     try {
-      const response = await fetch("http://127.0.0.1:5000/predict", {
+      const response = await fetch("https://arogyaai-10at.onrender.com/predict", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

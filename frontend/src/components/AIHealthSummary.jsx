@@ -20,7 +20,7 @@ export default function AIHealthSummary() {
       const { data: centers } = await supabase.from("health_centers").select("*");
       const { data: alerts } = await supabase.from("ai_alerts").select("*");
 
-      const response = await fetch("http://127.0.0.1:5000/summary", {
+      const response = await fetch("https://arogyaai-10at.onrender.com/summary", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
